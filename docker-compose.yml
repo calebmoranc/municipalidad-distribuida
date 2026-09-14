@@ -1,0 +1,53 @@
+services:
+  postgres: #tercer proceso, centraliza los datos
+    image: postgres:16-alpine
+    container_name: municipalidad_postgres
+    environment:
+      POSTGRES_DB: municipalidad
+      POSTGRES_USER: municipalidad
+      POSTGRES_PASSWORD: municipalidad_dev
+    
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck: #las réplicas esperan que PostgreSQL esté listo antes de iniciar.
+      test: ["CMD-SHELL", "pg_isready -U municipalidad -d municipalidad"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  tramites_1:
+    build: ./tramites
+    container_name: tramites_1
+    ports:
+      - "3333:3333"
+    environment:
+      HOST: 0.0.0.0
+      DB_CONNECTION: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: municipalidad
+      DB_PASSWORD: municipalidad_dev
+      DB_DATABASE: municipalidad
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tramites_2:
+    build: ./tramites
+    container_name: tramites_2
+    ports:
+      - "3334:3333"
+    environment:
+      HOST: 0.0.0.0
+      DB_CONNECTION: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: municipalidad
+      DB_PASSWORD: municipalidad_dev
+      DB_DATABASE: municipalidad
+    depends_on: #las réplicas esperan que PostgreSQL esté listo antes de iniciar.
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data: #volumen persistente: los datos sobreviven a los reinicios de los contenedores

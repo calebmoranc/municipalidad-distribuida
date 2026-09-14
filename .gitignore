@@ -1,0 +1,17 @@
+# Dependencias y archivos generados
+tramites/node_modules/
+tramites/build/
+tramites/.adonisjs/
+tramites/tmp/
+
+# Variables privadas
+.env
+.env.*
+!.env.example
+tramites/.env
+!tramites/.env.example
+
+# Bases locales
+*.sqlite
+*.sqlite3
+*.db
