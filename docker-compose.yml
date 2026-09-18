@@ -66,5 +66,42 @@ services:
         condition: service_started
       tramites_2:
         condition: service_started
+  usuarios_1:
+    build: ./usuarios
+    container_name: usuarios_1
+    env_file:
+      - ./usuarios/.env
+    ports:
+      - "3335:3333"
+    environment:
+      HOST: 0.0.0.0
+      DB_CONNECTION: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: municipalidad
+      DB_PASSWORD: municipalidad_dev
+      DB_DATABASE: usuarios_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  usuarios_2:
+    build: ./usuarios
+    container_name: usuarios_2
+    env_file:
+      - ./usuarios/.env
+    ports:
+      - "3336:3333"
+    environment:
+      HOST: 0.0.0.0
+      DB_CONNECTION: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: municipalidad
+      DB_PASSWORD: municipalidad_dev
+      DB_DATABASE: usuarios_db
+    depends_on:
+      postgres:
+        condition: service_healthy
 volumes:
   postgres_data: #volumen persistente: los datos sobreviven a los reinicios de los contenedores
