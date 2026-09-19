@@ -103,5 +103,41 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+  pagos_1:
+    build: ./pagos
+    container_name: pagos_1
+    env_file:
+      - ./pagos/.env
+    ports:
+      - "3337:3333"
+    environment:
+      HOST: 0.0.0.0
+      DB_CONNECTION: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: municipalidad
+      DB_PASSWORD: municipalidad_dev
+      DB_DATABASE: pagos_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+  pagos_2:
+    build: ./pagos
+    container_name: pagos_2
+    env_file:
+      - ./pagos/.env
+    ports:
+      - "3338:3333"
+    environment:
+      HOST: 0.0.0.0
+      DB_CONNECTION: pg
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: municipalidad
+      DB_PASSWORD: municipalidad_dev
+      DB_DATABASE: pagos_db
+    depends_on:
+      postgres:
+        condition: service_healthy
 volumes:
   postgres_data: #volumen persistente: los datos sobreviven a los reinicios de los contenedores
