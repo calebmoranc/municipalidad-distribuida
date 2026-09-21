@@ -30,4 +30,20 @@ export default class TramitesController {
 
   return response.ok(tramite)
 }
+async update({ params, request, response }: HttpContext) {
+  const tramite = await Tramite.find(params.id)
+
+  if (!tramite) {
+    return response.notFound({
+      message: 'Trámite no encontrado',
+    })
+  }
+
+  const data = request.only(['estado'])
+
+  tramite.estado = data.estado
+  await tramite.save()
+
+  return response.ok(tramite)
+}
 }
