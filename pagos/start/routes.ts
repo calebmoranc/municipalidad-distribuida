@@ -5,13 +5,16 @@
 |
 | The routes file is used for defining the HTTP routes.
 |
-*/import router from '@adonisjs/core/services/router'
+*/ import router from '@adonisjs/core/services/router'
 import PagosController from '#controllers/pagos_controller'
 import { middleware } from '#start/kernel'
 import { controllers } from '#generated/controllers'
 
+const RelojController = () => import('#controllers/reloj_controller')
+
 router.get('/api/v1/pagos', [PagosController, 'index'])
 router.post('/api/v1/pagos', [PagosController, 'store'])
+router.get('/api/v1/reloj', [RelojController, 'show'])
 router.get('/', () => {
   return { hello: 'world' }
 })
@@ -34,6 +37,5 @@ router
       .prefix('account')
       .as('profile')
       .use(middleware.auth())
-  
   })
   .prefix('/api/v1')

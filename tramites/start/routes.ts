@@ -11,27 +11,23 @@ import router from '@adonisjs/core/services/router'
 import { controllers } from '#generated/controllers'
 import TramitesController from '#controllers/tramites_controller'
 
+const RelojController = () => import('#controllers/reloj_controller')
+
 router.get('/', () => {
   return { hello: 'world' }
 })
 
 router
   .group(() => {
-    router
-      .post('/tramites', [TramitesController, 'store'])
-      .as('tramites.store')
+    router.post('/tramites', [TramitesController, 'store']).as('tramites.store')
 
-    router
-      .get('/tramites', [TramitesController, 'index'])
-      .as('tramites.index')
+    router.get('/tramites', [TramitesController, 'index']).as('tramites.index')
 
-    router
-      .get('/tramites/:id', [TramitesController, 'show'])
-      .as('tramites.show')
+    router.get('/tramites/:id', [TramitesController, 'show']).as('tramites.show')
 
-    router
-      .patch('/tramites/:id', [TramitesController, 'update'])
-      .as('tramites.update')
+    router.patch('/tramites/:id', [TramitesController, 'update']).as('tramites.update')
+
+    router.get('/reloj', [RelojController, 'show']).as('reloj.show')
 
     router
       .group(() => {

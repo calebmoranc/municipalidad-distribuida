@@ -25,6 +25,10 @@ export default await Env.create(new URL('../', import.meta.url), {
   DB_PASSWORD: Env.schema.string(),
   DB_DATABASE: Env.schema.string(),
 
+  // Identidad de esta replica dentro del sistema distribuido. Opcional:
+  // si falta, el reloj logico usa el hostname del contenedor.
+  NODE_ID: Env.schema.string.optional(),
+
   // App
   APP_KEY: Env.schema.secret(),
   APP_URL: Env.schema.string({ format: 'url', tld: false }),

@@ -1,7 +1,8 @@
-import type { HttpContext } from '@adonisjs/core/http'
 import Pago from '#models/pago'
+import { idNodo, tick } from '#services/reloj_logico'
+import { consultarTramite, marcarTramitePagado } from '#services/tramites_client'
 import { consultarUsuario } from '#services/usuarios_client'
-import env from '#start/env'
+import type { HttpContext } from '@adonisjs/core/http'
 
 export default class PagosController {
   async index() {
@@ -24,26 +25,24 @@ export default class PagosController {
     const idTramite = Number(datos.id_tramite)
     const usuarioId = Number(datos.usuario_id)
 
-    const tramitesUrl = env.get('TRAMITES_SERVICE_URL')
-
     // 1. Verificar que el trámite exista
-    try {
-      const tramiteResponse = await fetch(`${tramitesUrl}/api/v1/tramites/${idTramite}`)
+    const tramite = await consultarTramite(idTramite)
 
-      if (tramiteResponse.status === 404) {
-        return response.badRequest({
-          mensaje: 'El trámite indicado no existe',
-        })
-      }
+    if (tramite === 'no_existe') {
+      return response.badRequest({
+        mensaje: 'El trámite indicado no existe',
+      })
+    }
 
-      if (!tramiteResponse.ok) {
-        return response.serviceUnavailable({
-          mensaje: 'No se pudo verificar el trámite',
-        })
-      }
-    } catch {
+    if (tramite === 'sin_respuesta') {
       return response.serviceUnavailable({
         mensaje: 'No se pudo conectar con el servicio de trámites',
+      })
+    }
+
+    if (tramite === 'error') {
+      return response.serviceUnavailable({
+        mensaje: 'No se pudo verificar el trámite',
       })
     }
 
@@ -69,7 +68,8 @@ export default class PagosController {
       })
     }
 
-    // 3. Crear el pago
+    // 3. Crear el pago. El sello se toma despues de las llamadas anteriores, que
+    //    ya hicieron avanzar el reloj de esta replica.
     const pago = await Pago.create({
       idTramite,
       usuarioId,
@@ -77,29 +77,15 @@ export default class PagosController {
       metodoPago: datos.metodo_pago,
       fechaPago: datos.fecha_pago,
       estado: datos.estado,
+      lamport: tick(),
+      nodeId: idNodo(),
     })
 
     // 4. Actualizar el estado del trámite
-    try {
-      const actualizarTramite = await fetch(`${tramitesUrl}/api/v1/tramites/${idTramite}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          estado: 'pagado',
-        }),
-      })
+    const actualizado = await marcarTramitePagado(idTramite)
 
-      // 5. Si Trámites no pudo actualizarse, eliminar el pago
-      if (!actualizarTramite.ok) {
-        await pago.delete()
-
-        return response.serviceUnavailable({
-          mensaje: 'No se pudo actualizar el trámite. El pago fue eliminado.',
-        })
-      }
-    } catch {
+    // 5. Si Trámites no pudo actualizarse, eliminar el pago (compensación)
+    if (!actualizado) {
       await pago.delete()
 
       return response.serviceUnavailable({

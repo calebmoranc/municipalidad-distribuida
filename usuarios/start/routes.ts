@@ -11,6 +11,7 @@ import { middleware } from '#start/kernel'
 import router from '@adonisjs/core/services/router'
 import { controllers } from '#generated/controllers'
 const UsuariosController = () => import('#controllers/usuarios_controller')
+const RelojController = () => import('#controllers/reloj_controller')
 router.get('/', () => {
   return { hello: 'world' }
 })
@@ -36,6 +37,6 @@ router
     router.post('usuarios', [controllers.NewAccount, 'store'])
     router.get('usuarios', [UsuariosController, 'index'])
     router.get('usuarios/:id', [UsuariosController, 'show'])
+    router.get('reloj', [RelojController, 'show'])
   })
   .prefix('/api/v1')
-  

@@ -128,6 +128,7 @@ services:
     ports:
       - "3333:3333"
     environment:
+      NODE_ID: tramites_1
       HOST: 0.0.0.0
       DB_CONNECTION: pg
       DB_HOST: postgres
@@ -160,6 +161,7 @@ services:
     ports:
       - "3334:3333"
     environment:
+      NODE_ID: tramites_2
       HOST: 0.0.0.0
       DB_CONNECTION: pg
       DB_HOST: postgres
@@ -192,6 +194,7 @@ services:
     ports:
       - "3335:3333"
     environment:
+      NODE_ID: usuarios_1
       HOST: 0.0.0.0
       DB_CONNECTION: pg
       DB_HOST: postgres
@@ -223,6 +226,7 @@ services:
     ports:
       - "3336:3333"
     environment:
+      NODE_ID: usuarios_2
       HOST: 0.0.0.0
       DB_CONNECTION: pg
       DB_HOST: postgres
@@ -254,6 +258,7 @@ services:
     ports:
       - "3337:3333"
     environment:
+      NODE_ID: pagos_1
       HOST: 0.0.0.0
       DB_CONNECTION: pg
       DB_HOST: postgres
@@ -286,6 +291,7 @@ services:
     ports:
       - "3338:3333"
     environment:
+      NODE_ID: pagos_2
       HOST: 0.0.0.0
       DB_CONNECTION: pg
       DB_HOST: postgres
