@@ -6,6 +6,18 @@ import type { ApiDefinition } from './tree.d.ts'
 const placeholder: any = {}
 
 const routes = {
+  'pagos.index': {
+    methods: ["GET","HEAD"],
+    pattern: '/api/v1/pagos',
+    tokens: [{"old":"/api/v1/pagos","type":0,"val":"api","end":""},{"old":"/api/v1/pagos","type":0,"val":"v1","end":""},{"old":"/api/v1/pagos","type":0,"val":"pagos","end":""}],
+    types: placeholder as Registry['pagos.index']['types'],
+  },
+  'pagos.store': {
+    methods: ["POST"],
+    pattern: '/api/v1/pagos',
+    tokens: [{"old":"/api/v1/pagos","type":0,"val":"api","end":""},{"old":"/api/v1/pagos","type":0,"val":"v1","end":""},{"old":"/api/v1/pagos","type":0,"val":"pagos","end":""}],
+    types: placeholder as Registry['pagos.store']['types'],
+  },
   'auth.new_account.store': {
     methods: ["POST"],
     pattern: '/api/v1/auth/signup',

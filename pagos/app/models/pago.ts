@@ -9,6 +9,14 @@ export default class Pago extends BaseModel {
   @column()
   declare idTramite: number
 
+  /**
+   * Usuario que realizo el pago. Nullable en la base de datos por los pagos ya
+   * registrados antes de existir esta columna; el controlador exige que venga
+   * siempre en las peticiones nuevas.
+   */
+  @column()
+  declare usuarioId: number | null
+
   @column()
   declare monto: number
 
