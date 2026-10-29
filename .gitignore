@@ -15,3 +15,6 @@ tramites/.env
 *.sqlite
 *.sqlite3
 *.db
+
+# Respaldos y base backups generados por los scripts de recuperacion
+respaldos/

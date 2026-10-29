@@ -4,10 +4,10 @@ import { BaseModel, column } from '@adonisjs/lucid/orm'
 export default class Pago extends BaseModel {
   static table = 'pagos'
   @column({ isPrimary: true })
-  declare idPago: number
+  declare idPago: string
 
   @column()
-  declare idTramite: number
+  declare idTramite: string
 
   /**
    * Usuario que realizo el pago. Nullable en la base de datos por los pagos ya
@@ -15,7 +15,7 @@ export default class Pago extends BaseModel {
    * siempre en las peticiones nuevas.
    */
   @column()
-  declare usuarioId: number | null
+  declare usuarioId: string | null
 
   @column()
   declare monto: number

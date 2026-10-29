@@ -6,10 +6,11 @@ export default class extends BaseSchema {
   async up() {
     this.schema.createTable(this.tableName, (table) => {
       table.increments('id')
+
+      // Debe coincidir con el tipo de users.id, que ahora es el DNI (varchar(8)).
       table
-        .integer('tokenable_id')
+        .string('tokenable_id', 8)
         .notNullable()
-        .unsigned()
         .references('id')
         .inTable('users')
         .onDelete('CASCADE')

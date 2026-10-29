@@ -8,9 +8,14 @@
 #
 # OJO: no usar \gexec con `psql -c`, porque psql manda la cadena entera al
 # servidor como una sola consulta y el servidor no entiende los meta-comandos.
+# PGHOST se deja VACÍO a propósito cuando no viene definido, porque vacío en
+# libpq significa "usar el socket local". Si el valor por defecto fuera 'postgres',
+# este script conectado desde DENTRO de un contenedor de PostgreSQL resolvería
+# ese nombre al servidor principal y no crearía nada aquí. El servicio db_init sí
+# define PGHOST=postgres, y en ese caso sí queremos el primario.
 set -e
 
-PGHOST="${PGHOST:-postgres}"
+PGHOST="${PGHOST-}"
 PGUSER="${PGUSER:-municipalidad}"
 PGDATABASE="${PGDATABASE:-municipalidad}"
 

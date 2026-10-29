@@ -1,0 +1,166 @@
+
+VERIFICACIÓN DEL PROYECTO
+Comprueba los tres puntos del informe y deja constancia del resultado.
+
+==========================================================================
+ PUNTO 1 — El sistema actúa cuando falla el servidor principal
+==========================================================================
+
+1.1  Estado base
+   PASS  gateway /health responde                             200
+   PASS  GET /api/v1/tramites responde                        200
+
+1.2  Una réplica de tramites cae (el servicio sigue)
+   PASS  GET /tramites con 1 réplica caída                  200
+   PASS  POST /tramites con 1 réplica caída                 201
+      El gateway reparte el tráfico entre las dos réplicas.
+
+1.3  El servicio completo de tramites cae
+   PASS  GET /tramites con el servicio caído                 504
+   PASS  el gateway sigue vivo (/health)                      200
+   PASS  no devuelve 200, no finge que funciona               no-200
+      504 y no 500: el gateway sabe que no puede, en vez de propagar un error confuso.
+
+1.4  Recuperación del servicio
+   PASS  GET /tramites tras volver el servicio                200
+
+==========================================================================
+ PUNTO 2 — Consistencia de datos al registrar usuarios, trámites y pagos
+==========================================================================
+
+2.1  Validación del usuario (no se confía en el cliente)
+   PASS  trámite con usuario inexistente                     400
+   PASS  trámite sin usuarioId                               400
+   PASS  trámite con usuario válido                         201
+
+2.2  La solicitud de pago orquesta la validación
+   PASS  pago de un trámite inexistente                      400
+   PASS  pago con usuario inexistente                         400
+   PASS  pago sin usuario_id                                  400
+   PASS  pago válido (queda pendiente)                       201
+
+2.3  Tesorería o administración confirma el pago
+   PASS  el pago nace pendiente                               pendiente
+   PASS  confirmar pago como admin                            200
+
+2.4  El estado del sistema
+   PASS  el trámite quedó en estado pagado                  pagado
+   PASS  el pago se guardó                                   1
+   PASS  la intención quedó confirmada                      confirmado
+
+2.5  Coherencia entre las dos bases (sin pagos huérfanos)
+   PASS  pagos huérfanos (pago sin trámite pagado)          0
+      Comparación por lista: las tablas están en bases distintas, no hay JOIN posible.
+
+2.6  Las validaciones son llamadas HTTP reales, no confianza
+   PASS  crear trámite con usuarios caído                   503
+   PASS  no se creó el trámite pese a que el usuario existe 0
+      El usuario SÍ está en la base. Sin el servicio usuarios no se puede confirmar,
+      así que no se crea. Eso es validación real, no confianza en el cliente.
+
+2.7  Permisos por rol (ciudadano, tesorería, administración)
+   PASS  ciudadano no puede listar usuarios                   403
+   PASS  ciudadano no puede confirmar pagos                   403
+   PASS  el ciudadano solo ve sus trámites                   0
+   PASS  ciudadano crea un trámite a su nombre               201
+   PASS  el trámite quedó a nombre del ciudadano            95916944
+   PASS  ciudadano no puede pagar el trámite de otro         403
+
+2.8  Catálogo de estados del trámite (no cualquier texto)
+   PASS  un estado inventado se rechaza                       400
+   PASS  transición pendiente → en_revision                200
+   PASS  transición en_revision → pagado                   200
+   PASS  repetir el mismo estado es idempotente               200
+   PASS  transición no permitida pagado → pendiente        400
+   PASS  el estado no cambió tras el rechazo                 pagado
+
+2.9  Historial de estados (el sello de creación no se sobrescribe)
+   PASS  el historial del trámite responde                   200
+   PASS  el primer evento es la creación en 'pendiente'      si
+   PASS  el cambio de estado se añade al historial           si
+   PASS  el sello de creación sigue intacto tras el PATCH    si
+   PASS  al eliminar el trámite se borra su historial        0
+
+2.10 Concurrencia optimista (una escritura vieja no pisa la nueva)
+   PASS  el trámite nace en la versión 1                    1
+   PASS  el PATCH con la versión correcta se aplica          200
+   PASS  el PATCH con una versión vieja se rechaza           409
+   PASS  la escritura vieja no cambió el estado ni la versión en_revision:2
+
+2.11 Revocación de una identidad antes de que caduque
+   PASS  la identidad nueva sirve en trámites                200
+   PASS  el logout revoca la identidad y el token             200
+   PASS  la identidad revocada deja de valer (401)            401
+   PASS  las demás identidades siguen valiendo               200
+
+2.12 Reintento idempotente de la cola offline
+   PASS  el POST desde la cola offline se acepta              201
+   PASS  el trámite queda marcado como offline               offline
+   PASS  conserva la fecha original, no la de sincronización 2026-10-20
+   PASS  el reintento con la misma clave responde 200         200
+   PASS  devuelve el mismo trámite, sin duplicar             T21
+   PASS  la base tiene una sola fila para esa clave           1
+   PASS  ordena por la fecha real de solicitud                T21
+
+==========================================================================
+ PUNTO 3 — Recuperación ante fallos
+==========================================================================
+
+3.1  Respaldo de los datos
+   PASS  pg_dump de las 3 bases de datos                      ok
+   PASS  el respaldo no está vacío                          mayor-0
+   PASS  se puede calcular la suma de verificación           ok
+
+3.2  Registro de operaciones para poder retomarlas
+   PASS  la tabla de intenciones existe                       1
+   PASS  no queda ninguna intención pendiente                0
+   PASS  hay intenciones registradas                          ok
+
+3.3  El reconciliador responde
+   PASS  POST /api/v1/intentos/reconciliar                    ok
+      Devuelve: {"confirmados":0,"revertidos":0,"pendientes":0}
+
+3.4  Archivado de WAL (lo que permite volver en el tiempo)
+   PASS  archive_mode está activado                          on
+   PASS  hay archivos de WAL archivados                       mayor-0
+      2 archivos. Son los que permiten restaurar a un instante exacto, no solo al
+      último backup. Demostración completa: ./scripts/recuperacion.sh pitr-preparar
+
+3.5  La base de datos caída se detecta rápido (no 8 segundos)
+   PASS  responde 503 con la base caída                      503
+   PASS  el mensaje explica la causa                          si
+   PASS  falla en menos de 3s (antes tardaba 8,4)             menor-3000
+   PASS  el gateway sigue vivo                                200
+   PASS  vuelve a funcionar al levantar la base               200
+
+3.6  Reinicio del servicio (lo que dispara la reconciliación)
+   PASS  pagos vuelve a responder tras reiniciarse            200
+      Al arrancar, cada réplica pasa el reconciliador: recupera lo que quedó a medias.
+
+==========================================================================
+ 4. INTERFAZ WEB
+==========================================================================
+
+4.1  Se sirve desde el gateway
+   PASS  GET /ui/ sirve la interfaz                           200
+   PASS  GET / redirige a /ui/                                302
+
+4.2  El administrador entra y su rol se respeta
+   PASS  el login devuelve un token                           si
+   PASS  el login devuelve la identidad firmada               si
+   PASS  el perfil confirma el rol admin                      admin
+   PASS  el perfil renueva la identidad                       si
+
+==========================================================================
+ RESUMEN
+==========================================================================
+   Comprobaciones: 76
+   Superadas:  76
+   Fallidas:   0
+
+    LOS TRES PUNTOS DEL INFORME QUEDAN VERIFICADOS.
+
+   Demostraciones largas, que modifican datos a propósito:
+     ./scripts/demostracion.sh            # fallos y tiempos con p50/p95/máx
+     ./scripts/recuperacion.sh saga       # una operación interrumpida se recupera sola
+     ./scripts/recuperacion.sh pitr-*     # recuperar a un instante exacto

@@ -1,11 +1,35 @@
 # Especificación Técnica — Sistema de Gestión Municipal
 
 > Documento generado a partir del análisis del código fuente existente.
-> Refleja el estado actual del proyecto (Jul. 2026) y los requisitos que el sistema
-> debe cumplir. Las secciones marcadas con **Estado** indican qué parte ya está
-> implementada y qué parte es pendiente.
+> Las secciones 2–13 describen la **especificación base (Jul. 2026)**. El apartado 0
+> resume el **estado actual (Oct. 2026)**; en cada sección se anota lo que ya cambió.
 
 ---
+
+## 0. Estado actual (Oct. 2026)
+
+Delta respecto a la especificación base. Todo lo de abajo está implementado y verificado
+con `./scripts/verificacion.sh` (76/76) y `EVIDENCIAS.txt`.
+
+| Tema | Especificación base | Estado actual |
+|---|---|---|
+| **Identificador de usuario** | `users.id` autoincremental | **DNI (`varchar(8)`)** como PK. El registro exige `dni` (8 dígitos) |
+| **Login** | correo + contraseña | igual (el `id` devuelto es el DNI) |
+| **Ids de trámite/pago** | autoincrementales | códigos legibles `T1`, `T13`, `T222` y `P1`, `P333` (`varchar(12)`, hasta 11 dígitos), con secuencias PostgreSQL |
+| **Catálogo de trámites** | no existía | tabla `tipos_tramite` (`nombre`, `monto`, `activo`) gestionada solo por admin; el tipo `Otro` deja fijar `tipoDetalle` y `monto` |
+| **Roles y permisos** | pendiente | `users.rol`: `ciudadano`, `personal_muni_tesoreria`, `admin`; `servicio` para llamadas internas |
+| **Autenticación entre servicios** | Bearer en todos | **identidad firmada** HMAC-SHA256 en `X-Identidad`; el token opaco solo se usa con `/account/*` |
+| **Registro de pago** | un solo paso, con compensación por `DELETE` | **dos pasos**: `POST /pagos` deja `pendiente`; `POST /pagos/:id/confirmar` (solo privilegiado) acredita con **saga** (`pagos_intentos`) |
+| **Gateway** | rutas de trámites/pagos/usuarios | además `/api/v1/auth`, `/api/v1/account`, `/api/v1/tipos-tramite`, `/api/v1/admin/usuarios`, `/api/v1/reloj/*`, `/api/v1/circuitos/*`, `/api/v1/intentos` |
+| **Auth replicado en trámites/pagos** | duplicado | **eliminado**: solo usuarios tiene rutas `auth/account`, `Users` y `auth_access_tokens`; trámites y pagos usan `X-Identidad` |
+| **Consulta de usuario** | no existía | trámites y pagos validan al usuario por HTTP (`GET /api/v1/usuarios/:id`) |
+| **Estados del trámite** | texto libre | catálogo `pendiente`, `en_revision`, `pagado`, `rechazado`, `anulado`, transiciones validadas (`estados.ts`) e **historial inmutable** en `tramites_eventos` |
+| **Cola offline** | no existía | la UI guarda trámites no enviados en `localStorage` y los reintenta; el servidor garantiza idempotencia con `(usuario_id, clave_idempotencia)`, conserva `creado_cliente_en` y marca `origen='offline'` |
+| **Acceso remoto** | solo localhost | túnel HTTPS temporal con `cloudflared` (`scripts/tunel.sh`, perfil `tunel`); la URL cambia al reiniciar |
+
+---
+
+
 
 ## 1. Propósito y alcance
 
@@ -100,8 +124,9 @@ esperan `condition: service_healthy` antes de arrancar. Volumen persistente
 | Lint / Formato | ESLint 10 + Prettier | — |
 | Dev server | `node ace serve --hmr` (hot-hook) | — |
 
-**Nota de despliegue:** los `Dockerfile` ejecutan `pnpm dev` (servidor de desarrollo con
-HMR). Para producción se requiere un build (`node ace build`) y `pnpm start`.
+**Nota de despliegue:** los `Dockerfile` son multi-stage: compilan con `node ace build`,
+instalan solo dependencias de producción y ejecutan `node bin/server.js` con
+`NODE_ENV=production`. Ya no se sirve con el servidor de desarrollo.
 
 ---
 
@@ -118,17 +143,19 @@ municipalidad/
 └── pagos/                      Servicio de pagos      → pagos_db
 ```
 
-### 3.1 Anatomía de un servicio (idéntica en los tres)
+### 3.1 Anatomía de los servicios
+
+La estructura es común a los tres; solo el servicio de usuarios incluye el stack de auth.
 
 | Ruta | Responsabilidad |
 |---|---|
-| `app/controllers/` | Handlers HTTP. Stack de auth replicado en cada servicio + controlador de dominio. |
-| `app/models/` | Modelos Lucid (`User` en los tres; `Tramite` en tramites; `Pago` en pagos). |
-| `app/middleware/` | `auth_middleware` (exige token), `silent_auth_middleware` (token opcional), `container_bindings_middleware`, `force_json_response_middleware`. |
-| `app/validators/` | Esquemas Vine para signup y login. |
-| `app/transformers/` | Forma de la respuesta JSON (`UserTransformer`; excluye password). |
+| `app/controllers/` | Handlers HTTP. Usuarios incluye el stack de auth (`AccessTokens`, `NewAccount`, `Profile`); trámites y pagos solo sus controladores de dominio. |
+| `app/models/` | Modelos Lucid: `User` en usuarios; `Tramite` y `TipoTramite` en trámites; `Pago` y `PagoIntento` en pagos. |
+| `app/middleware/` | `container_bindings_middleware` y `force_json_response_middleware`; solo usuarios tiene `auth_middleware`/`silent_auth_middleware`. |
+| `app/validators/` | Esquemas Vine de usuarios (signup/login y alta con rol); la identidad solo existe aquí. |
+| `app/transformers/` | Forma de la respuesta JSON (solo usuarios: `UserTransformer`; excluye password). |
 | `app/exceptions/handler.ts` | Traducción de excepciones a respuestas HTTP. |
-| `config/` | `app`, `auth`, `database`, `bodyparser`, `cors`, `encryption`, `hash`, `logger`, `session`, `shield`. |
+| `config/` | `app`, `database`, `bodyparser`, `cors`, `encryption`, `hash`, `logger`, `session`, `shield` (y `auth` solo en usuarios). |
 | `start/routes.ts` | Tabla de endpoints. |
 | `start/kernel.ts` | Registro de middleware (server / router / named). |
 | `start/env.ts` | Validación y tipado de variables de entorno. |
@@ -155,24 +182,29 @@ Base de datos: `usuarios_db`.
 | Método | Ruta | Auth | Descripción | Respuesta |
 |---|---|---|---|---|
 | GET | `/` | No | Health check | `200 {hello:"world"}` |
-| POST | `/api/v1/auth/signup` | No | Crear cuenta y emitir token | `200 {user, token}` |
-| POST | `/api/v1/auth/login` | No | Verificar credenciales y emitir token | `200 {user, token}` |
-| GET | `/api/v1/account/profile` | Sí | Perfil del usuario autenticado | `200 user` |
+| POST | `/api/v1/auth/signup` | No | Crear cuenta (`ciudadano`) y emitir token | `200 {user, token, identidad}` |
+| POST | `/api/v1/auth/login` | No | Verificar credenciales y emitir token | `200 {user, token, identidad}` |
+| GET | `/api/v1/account/profile` | Sí | Perfil autenticado (renueva la identidad) | `200 {user, identidad}` |
 | POST | `/api/v1/account/logout` | Sí | Revocar el token actual | `200 {message}` |
-| POST | `/api/v1/usuarios` | No | Crear usuario | `200 user` |
-| GET | `/api/v1/usuarios` | No | Listar usuarios | `200 [user]` |
-| GET | `/api/v1/usuarios/:id` | No | Obtener usuario por id | `200 user` / `404` |
+| POST | `/api/v1/usuarios` | No | Registro público; **exige `dni`**; el rol siempre es `ciudadano` | `200 {user, token, identidad}` |
+| POST | `/api/v1/admin/usuarios` | Sí (**admin**) | Alta con rol elegido (`ciudadano`, `personal_muni_tesoreria`, `admin`) | `200 user` |
+| GET | `/api/v1/usuarios` | Sí (**admin**) | Listar usuarios | `200 [user]` |
+| GET | `/api/v1/usuarios/:id` | No | Obtener usuario por DNI | `200 user` / `404` |
 
 **Payloads**
 
 ```jsonc
 // POST /api/v1/auth/signup  (signupValidator)
 {
+  "dni": "string",                // 8 dígitos, único en users.id
   "fullName": "string|null",      // opcional
   "email": "string",              // formato email, máx 254, único en users.email
   "password": "string",           // 8–32 caracteres
   "passwordConfirmation": "string"// debe coincidir con password
 }
+
+// POST /api/v1/admin/usuarios  (crearUsuarioValidator)
+// igual que el anterior + "rol": "ciudadano|personal_muni_tesoreria|admin"
 
 // POST /api/v1/auth/login  (loginValidator)
 { "email": "string", "password": "string" }
@@ -182,9 +214,10 @@ Base de datos: `usuarios_db`.
 
 ```jsonc
 {
-  "user": { "id": 1, "fullName": "…", "email": "…",
+  "user": { "id": "10000001", "fullName": "…", "email": "…", "rol": "admin",
             "createdAt": "…", "updatedAt": "…", "initials": "AB" },
-  "token": "<access token opaco>"
+  "token": "<access token opaco>",
+  "identidad": "<HMAC firmado: id + rol + caducidad>"
 }
 ```
 
@@ -198,20 +231,24 @@ Base de datos: `municipalidad`.
 | Método | Ruta | Auth | Descripción | Respuesta |
 |---|---|---|---|---|
 | GET | `/` | No | Health check | `200 {hello:"world"}` |
-| GET | `/api/v1/tramites` | No | Listar trámites | `200 [tramite]` |
-| POST | `/api/v1/tramites` | No | Crear trámite | `201 tramite` |
-| GET | `/api/v1/tramites/:id` | No | Detalle de un trámite | `200 tramite` / `404 {message}` |
-| PATCH | `/api/v1/tramites/:id` | No | Actualizar estado | `200 tramite` / `404 {message}` |
-| POST | `/api/v1/auth/signup` | No | (stack auth replicado) | `200 {user, token}` |
-| POST | `/api/v1/auth/login` | No | (stack auth replicado) | `200 {user, token}` |
-| GET | `/api/v1/account/profile` | Sí | Perfil autenticado | `200 user` |
-| POST | `/api/v1/account/logout` | Sí | Revocar token | `200 {message}` |
+| GET | `/api/v1/tramites` | `X-Identidad` | Listar trámites (ciudadano: solo los suyos) | `200 [tramite]` |
+| POST | `/api/v1/tramites` | `X-Identidad` | Crear trámite (valida el usuario por HTTP) | `201 tramite` |
+| GET | `/api/v1/tramites/:id` | `X-Identidad` | Detalle de un trámite | `200 tramite` / `404 {message}` |
+| GET | `/api/v1/tramites/:id/eventos` | `X-Identidad` | Historial de estados (eventos inmutables con sello Lamport) | `200 [evento]` / `404 {message}` |
+| PATCH | `/api/v1/tramites/:id` | `X-Identidad` | Cambiar estado (catálogo y transiciones validadas); el admin además tipo/descripción/monto | `200 tramite` / `400` / `403` / `404 {message}` |
+| DELETE | `/api/v1/tramites/:id` | `X-Identidad` (**admin**) | Eliminar un trámite | `200 {message, id}` / `403` |
+| GET | `/api/v1/tipos-tramite` | `X-Identidad` | Catálogo de tipos y montos | `200 [tipo]` |
+| POST/PATCH/DELETE | `/api/v1/tipos-tramite[/:id]` | `X-Identidad` (**admin**) | Gestionar el catálogo | `201` / `200` / `403` |
 
 **Payloads**
 
 ```jsonc
-// POST /api/v1/tramites
-{ "usuarioId": 1, "tipo": "licencia de conducir", "descripcion": "…" }
+// POST /api/v1/tramites — tipo del catálogo (el monto lo fija la BD)
+{ "usuarioId": "10000001", "tipo": "Licencia de funcionamiento", "descripcion": "…" }
+
+// POST /api/v1/tramites — tipo "Otro" (monto libre)
+{ "usuarioId": "10000001", "tipo": "Otro", "tipoDetalle": "…",
+  "monto": 5000, "descripcion": "…" }
 // estado se asigna automáticamente: "pendiente"
 
 // PATCH /api/v1/tramites/:id
@@ -228,29 +265,31 @@ Base de datos: `pagos_db`. Variable `TRAMITES_SERVICE_URL` (en Docker:
 | Método | Ruta | Auth | Descripción | Respuesta |
 |---|---|---|---|---|
 | GET | `/` | No | Health check | `200 {hello:"world"}` |
-| GET | `/api/v1/pagos` | No | Listar pagos | `200 [pago]` |
-| POST | `/api/v1/pagos` | No | Registrar pago (orquesta trámite) | `201 pago` |
-| POST | `/api/v1/auth/signup` | No | (stack auth replicado) | `200 {user, token}` |
-| POST | `/api/v1/auth/login` | No | (stack auth replicado) | `200 {user, token}` |
-| GET | `/api/v1/account/profile` | Sí | Perfil autenticado | `200 user` |
-| POST | `/api/v1/account/logout` | Sí | Revocar token | `200 {message}` |
+| GET | `/api/v1/pagos` | `X-Identidad` | Listar pagos (ciudadano: solo los suyos) | `200 [pago]` |
+| POST | `/api/v1/pagos` | `X-Identidad` | Registrar **solicitud** de pago (nace `pendiente`) | `201 pago` |
+| POST | `/api/v1/pagos/:id/confirmar` | `X-Identidad` (**privilegiado**) | Acreditar pago y trámite (saga) | `200 pago` / `403` |
+| GET | `/api/v1/intentos` | No | Intenciones de pago registradas | `200 {porEstado, ultimos}` |
+| POST | `/api/v1/intentos/reconciliar` | No | Forzar una pasada del reconciliador | `200 {confirmados, revertidos, pendientes}` |
 
 **Payload**
 
 ```jsonc
 // POST /api/v1/pagos
-{ "id_tramite": 1, "monto": 15000.00,
-  "metodo_pago": "tarjeta", "fecha_pago": "2026-01-15T10:00:00Z",
-  "estado": "pendiente" }
+{ "id_tramite": "T1", "usuario_id": "10000001", "monto": 15000.00,
+  "metodo_pago": "tarjeta", "fecha_pago": "2026-01-15T10:00:00Z" }
+// estado lo fija el servidor: "pendiente". El ciudadano no envía usuario_id
+// (lo impone su identidad firmada).
 ```
 
 ### 4.4 Reglas de enrutamiento del gateway
 
 | Path match | Upstream |
 |---|---|
-| `/tramites`, `/api/v1/tramites` | `tramites_1`, `tramites_2` |
-| `/api/v1/usuarios` | `usuarios_1`, `usuarios_2` |
-| `/api/v1/pagos` | `pagos_1`, `pagos_2` |
+| `/tramites`, `/api/v1/tramites`, `/api/v1/tipos-tramite` | `tramites_1`, `tramites_2` |
+| `/api/v1/auth`, `/api/v1/account`, `/api/v1/usuarios`, `/api/v1/admin/usuarios` | `usuarios_1`, `usuarios_2` |
+| `/api/v1/pagos`, `/api/v1/intentos` | `pagos_1`, `pagos_2` |
+| `/api/v1/reloj/{usuarios,tramites,pagos}`, `/api/v1/circuitos/{tramites,pagos}` | servicio correspondiente |
+| `/health`, `/ui/` | nginx (estático) |
 
 Política de failover: `max_fails=1 fail_timeout=10s`, reintento en `error`, `timeout`,
 `502`, `503`, `504`, hasta 2 intentos. Se propagan `Host` y `X-Real-IP`.
@@ -263,21 +302,22 @@ Política de failover: `max_fails=1 fail_timeout=10s`, reintento en `error`, `ti
 
 | Columna | Tipo | Restricciones |
 |---|---|---|
-| `id` | increments | PK, not null |
+| `id` | **string(8)** | PK, not null (es el **DNI**) |
 | `full_name` | string | nullable |
 | `email` | string(254) | not null, **unique** |
 | `password` | string | not null (hash) |
+| `rol` | string(40) | not null, default `'ciudadano'` |
 | `created_at` | timestamp | not null |
 | `updated_at` | timestamp | nullable |
 
-Índice único implícito en `email` por la restricción `UNIQUE`.
+Índices únicos en `email`; `id` es la PK y guarda el DNI.
 
 ### 5.2 `auth_access_tokens` (servicio Usuarios)
 
 | Columna | Tipo | Restricciones |
 |---|---|---|
 | `id` | increments | PK |
-| `tokenable_id` | integer | not null, unsigned, **FK → users.id ON DELETE CASCADE** |
+| `tokenable_id` | **string(8)** | not null, **FK → users.id ON DELETE CASCADE** (DNI) |
 | `type` | string | not null |
 | `name` | string | nullable |
 | `hash` | string | not null |
@@ -293,26 +333,63 @@ Política de failover: `max_fails=1 fail_timeout=10s`, reintento en `error`, `ti
 
 | Columna | Tipo | Restricciones |
 |---|---|---|
-| `id` | increments | PK |
-| `usuario_id` | integer | not null, unsigned |
-| `tipo` | string(100) | not null |
+| `id` | **string(12)** | PK (`T1`…, hasta 11 dígitos, generado con `tramites_num_seq`) |
+| `usuario_id` | **string(8)** | not null (DNI) |
+| `tipo` | string(100) | not null (nombre del catálogo o `Otro`) |
+| `tipo_detalle` | string(200) | nullable (solo `Otro`) |
 | `descripcion` | text | not null |
+| `monto` | decimal(10,2) | not null, default `0` |
 | `estado` | string(30) | not null, default `'pendiente'` |
+| `version` | integer | not null, default `1` (concurrencia optimista) |
+| `lamport` | integer | nullable (reloj lógico) |
+| `node_id` | string(100) | nullable (réplica) |
 | `created_at` | timestamp | |
 | `updated_at` | timestamp | |
+
+Además existe **`tipos_tramite`**: `id` (increments), `nombre` (string(100), unique),
+`monto` (decimal(10,2)), `activo` (boolean, default `true`), timestamps.
+
+### 5.3.1 `tramites_eventos` (servicio Trámites)
+
+| Columna | Tipo | Restricciones |
+|---|---|---|
+| `id` | increments | PK |
+| `tramite_id` | string(12) | not null, FK → `tramites.id` **ON DELETE CASCADE** |
+| `estado_anterior` | string(30) | nullable (null solo en la creación) |
+| `estado_nuevo` | string(30) | not null |
+| `actor_id` | string(20) | nullable (DNI o `servicio`) |
+| `lamport` | integer | not null (sello inmutable del evento) |
+| `node_id` | string(100) | not null |
+| `created_at` | timestamp | not null |
+
+Cada creación y cada cambio de estado insertan una fila; los eventos no se editan.
+Así el sello de creación sobrevive aunque `tramites.lamport`/`node_id` se actualicen.
+
+Cada `PATCH` incrementa `tramites.version` dentro de un `UPDATE ... WHERE version = ?`.
+Si otra escritura ganó la carrera, afecta 0 filas y responde **409**; el cliente puede
+enviar la `version` que leyó para detectar antes los datos viejos. La verificación 2.10
+comprueba el caso correcto y el rechazo de una escritura con versión vieja.
 
 ### 5.4 `pagos` (servicio Pagos)
 
 | Columna | Tipo | Restricciones |
 |---|---|---|
-| `id_pago` | increments | PK |
-| `id_tramite` | integer | not null |
+| `id_pago` | **string(12)** | PK (`P1`…, hasta 11 dígitos, con `pagos_num_seq`) |
+| `id_tramite` | **string(12)** | not null (`T1`…) |
+| `usuario_id` | **string(8)** | nullable (DNI); el controlador lo exige |
 | `monto` | decimal(10,2) | not null |
 | `metodo_pago` | string | not null |
 | `fecha_pago` | timestamp | not null |
 | `estado` | string | not null, default `'pendiente'` |
+| `lamport` | integer | nullable |
+| `node_id` | string(100) | nullable |
 | `created_at` | timestamp | |
 | `updated_at` | timestamp | |
+
+Y la tabla de la saga **`pagos_intentos`**: `id` (increments), `id_tramite` string(12),
+`usuario_id` string(8), `pago_id` string(12) nullable, `estado`
+(`pendiente|confirmado|revertido`), `intentos`, `ultimo_error`, `lamport`, `node_id`,
+timestamps. |
 
 ### 5.5 Diagrama de relaciones
 
@@ -321,7 +398,7 @@ usuarios_db                          municipalidad            pagos_db
 ┌──────────────┐                    ┌──────────────┐          ┌──────────────┐
 │    users     │                    │   tramites   │          │    pagos     │
 │──────────────│                    │──────────────│          │──────────────│
-│ id      PK   │◄──┐                │ id      PK   │          │ id_pago  PK  │
+│ id(DNI) PK   │◄──┐                │ id(T1)  PK   │          │ id_pago(P1)PK│
 │ email  UQ   │   │                │ usuario_id   │          │ id_tramite ──┼─┐
 │ password    │   │ (FK CASCADE)   │ tipo         │          │ monto        │ │
 │ full_name   │   │                │ descripcion  │          │ metodo_pago  │ │
@@ -347,6 +424,18 @@ mediante una llamada HTTP al servicio de trámites.
 
 ### 6.1 Mecanismo
 
+Solo el servicio de usuarios implementa el stack de auth (rutas `/auth/*` y `/account/*`,
+`config/auth.ts`, tablas `users`/`auth_access_tokens`). Trámites y pagos eliminaron ese
+andamiaje: no crean esas tablas y no consultan el token opaco.
+
+Además del token opaco, existe una **identidad firmada** (`X-Identidad`): un HMAC-SHA256
+de `{ id (DNI), rol, exp, jti }` que el servicio de usuarios emite al hacer login/signup y
+que trámites, pagos y el listado de usuarios verifican **localmente**, sin llamar a usuarios.
+El secreto es `AUTH_IDENTITY_SECRET` (TTL 12 h; 120 s cuando el rol es `servicio`). Se
+acepta también `AUTH_IDENTITY_SECRET_ANTERIOR` durante la rotación. El `jti` permite
+revocar una identidad concreta: se anota en `identidades_revocadas` y los servicios de
+dominio cachean la lista (`REVOCACION_TTL_MS`, 5 s).
+
 Guard por defecto: `api` (tokens). Configurado en `config/auth.ts`:
 
 - **`api`** — `tokensGuard` + `tokensUserProvider`, modelo `User`, tabla de tokens
@@ -355,6 +444,8 @@ Guard por defecto: `api` (tokens). Configurado en `config/auth.ts`:
   frontend con SSR.
 
 ### 6.2 Flujo
+
+En el servicio de usuarios:
 
 ```
 signup/login
@@ -378,18 +469,30 @@ auth_middleware (named: auth) en rutas /account → 401 si no hay token ◄┘
 
 - R1. Las contraseñas se almacenan **hasheadas** (nunca en texto plano).
 - R2. El campo `password` nunca se serializa (`serializeAs: null`).
-- R3. `signup` devuelve token: no se requiere un login adicional.
+- R3. `signup` devuelve token **e identidad**: no se requiere un login adicional.
 - R4. `logout` revoca el token actual de la BD, no solo del cliente.
-- R5. El email es único a nivel de base de datos.
-- R6. Rutas `/account/*` exigen autenticación; el resto son públicas.
-- R7. La validación de email y password es obligatoria antes de tocar la BD.
+- R5. El email es único y el **DNI** (`users.id`) también.
+- R6. Rutas de dominio exigen `X-Identidad`; `/account/*` además exige el token.
+- R7. La validación de DNI, email y password es obligatoria antes de tocar la BD.
+
+### 6.4 Roles
+
+| Rol | Alcance |
+|---|---|
+| `ciudadano` | Solo ve y crea lo suyo; **solicita** pagos (quedan `pendiente`) |
+| `personal_muni_tesoreria` | Ve todo y **confirma** pagos |
+| `admin` | Todo lo anterior + CRUD de trámites, catálogo y alta de usuarios con rol |
+| `servicio` | Identidad interna de corta vida para pagos/reconciliador |
 
 ---
 
 ## 7. Flujo de negocio crítico: registro de pago
 
-Este es el único flujo multi-servicio del sistema y el que concentra el riesgo de
-consistencia. Secuencia implementada en `pagos/app/controllers/pagos_controller.ts:10`.
+Es el único flujo multi-servicio y concentra el riesgo de consistencia. En el modelo
+actual **se divide en dos pasos**: la solicitud (ciudadano) y la confirmación
+(privilegiado), coordinadas por una **saga** persistida en `pagos_intentos`.
+
+### 7.1 Paso 1 — solicitud (`POST /api/v1/pagos`)
 
 ```
  Cliente        pagos            gateway          tramites
@@ -397,20 +500,26 @@ consistencia. Secuencia implementada en `pagos/app/controllers/pagos_controller.
    ├─ POST /api/v1/pagos ────────►│                 │
    │             │ 1. GET /api/v1/tramites/:id ────►│
    │             │◄───────────────┼─────────────────┤
-   │             │   404 → 400 "El trámite no existe"
-   │             │   !ok  → 503 "No se pudo verificar"
-   │             │   throw → 503 "No se pudo conectar"
-   │             │ 2. INSERT pago (estado pendiente)
-   │             │ 3. PATCH /api/v1/tramites/:id {estado:"pagado"}
-   │             │◄───────────────┼─────────────────┤
-   │             │   !ok  → DELETE pago + 503
-   │             │   throw → DELETE pago + 503
-   │◄─ 201 pago ──┤ 4. éxito
+   │             │   404 → 400 "El trámite indicado no existe"
+   │             │ 2. valida el usuario por HTTP (GET /api/v1/usuarios/:id)
+   │             │ 3. INSERT intento (pendiente) + INSERT pago (pendiente)
+   │◄─ 201 pago ──┤   (el pago NO acredita todavía)
 ```
 
-**Contrato de consistencia (compensación manual):** si el paso 3 falla, el pago
-recién creado se elimina y se devuelve `503`. Es un patrón *compensating transaction*
-en lugar de una transacción distribuida, adecuado dado que sólo participan dos servicios.
+### 7.2 Paso 2 — confirmación (`POST /api/v1/pagos/:id/confirmar`)
+
+```
+   ├─ POST /pagos/P1/confirmar ──►│
+   │             │ 1. PATCH trámite {estado:"pagado"}  (idempotente)
+   │             │ 2. UPDATE pago  {estado:"pagado"}  + marca intento confirmado
+   │◄─ 200 pago ──┤
+```
+
+- **Idempotencia:** reintentar la confirmación no vuelve a aplicar el PATCH.
+- **Fallo inyectable:** con `PAGOS_FALLAR_ANTES_DE_PATCH=true`, el proceso aborta
+  (`process.exit(70)`) entre PATCH y UPDATE; la saga deja el intento en `pendiente`.
+- **Reconciliador:** `POST /api/v1/intentos/reconciliar` recorre los intentos
+  pendientes y los confirma o revierte según el estado real.
 
 **Errores del flujo**
 
@@ -419,9 +528,8 @@ en lugar de una transacción distribuida, adecuado dado que sólo participan dos
 | Trámite inexistente | 400 | `El trámite indicado no existe` |
 | Trámite no verificable | 503 | `No se pudo verificar el trámite` |
 | Servicio caído | 503 | `No se pudo conectar con el servicio de trámites` |
+| Confirmar sin privilegio | 403 | — |
 | Actualización fallida (pago revertido) | 503 | `No se pudo actualizar el trámite. El pago fue eliminado.` |
-
----
 
 ## 8. Variables de entorno
 
@@ -437,14 +545,27 @@ impide el arranque (fail-fast).
 | `APP_KEY` | secret | Sí | Todos | 32 bytes, **único por servicio** |
 | `APP_URL` | url | Sí | Todos | `http://${HOST}:${PORT}` |
 | `SESSION_DRIVER` | enum | Sí | Todos | `cookie` |
-| `DB_CONNECTION` | string | Sí | Todos | `sqlite` local / `pg` en Docker |
+| `DB_CONNECTION` | string | Sí | Todos | `pg` en Docker (los `.env` locales traen `sqlite`) |
 | `DB_HOST` | string | Sí (pg) | Todos | `postgres` en Docker |
 | `DB_PORT` | number | Sí (pg) | Todos | `5432` |
 | `DB_USER` | string | Sí (pg) | Todos | `municipalidad` |
 | `DB_PASSWORD` | string | Sí (pg) | Todos | `municipalidad_dev` |
 | `DB_DATABASE` | string | Sí (pg) | Todos | por servicio |
 | `TRAMITES_SERVICE_URL` | string | Sí | **pagos** | `http://gateway` |
+| `USUARIOS_SERVICE_URL` | string | Sí | tramites, pagos | `http://gateway` |
+| `AUTH_IDENTITY_SECRET` | secret | No | Todos | `municipalidad-identidad-dev` |
+| `AUTH_IDENTITY_SECRET_ANTERIOR` | secret | No | Todos | vacío (secreto que se acepta durante la rotación) |
+| `REVOCACION_TTL_MS` | number | No | tramites, pagos | 5000 (caché de identidades revocadas) |
+| `NODE_ID` | string | No | Todos | nombre de la réplica (reloj lógico) |
+| `PAGOS_FALLAR_ANTES_DE_PATCH` | boolean | No | pagos | `false` (demo de saga) |
+| `PAGOS_INTENTOS_ANTIGUEDAD_SEG` | number | No | pagos | 30 |
 | `CORS_ORIGIN` | lista | No | Todos | comentado (deshabilitado) |
+| `HTTP_TIMEOUT_MS` | number | No | tramites, pagos | 2000 |
+| `HTTP_REINTENTOS` | number | No | tramites, pagos | 1 (base) |
+| `HTTP_REINTENTOS_TRAMITES` | number | No | pagos | hereda `HTTP_REINTENTOS` |
+| `HTTP_REINTENTOS_USUARIOS` | number | No | tramites, pagos | hereda `HTTP_REINTENTOS` |
+| `CIRCUIT_UMBRAL` | number | No | tramites, pagos | 3 |
+| `CIRCUIT_ABIERTO_MS` | number | No | tramites, pagos | 10000 |
 
 **Seguridad de configuración:** los `.env` están en `.gitignore`; sólo se versionan
 los `.env.example`. Las `APP_KEY` presentes en los `.env` locales no deben reutilizarse
@@ -470,13 +591,15 @@ mediante `environment:` en `docker-compose.yml`.
 | RF-11 | Listar pagos | pagos | **Implementado** |
 | RF-12 | Balanceo de carga y failover entre réplicas | gateway | **Implementado** |
 | RF-13 | Persistencia de datos sobreviva a reinicios | infra | **Implementado** |
-| RF-14 | Filtrar trámites por usuario | tramites | Pendiente |
+| RF-14 | Filtrar trámites por usuario | tramites | **Implementado** |
 | RF-15 | Paginación y filtros en listados | todos | Pendiente |
-| RF-16 | Validación de entrada en trámites y pagos (Vine) | tramites, pagos | Pendiente |
-| RF-17 | Proteger rutas de escritura con autenticación | tramites, pagos | Pendiente |
-| RF-18 | Historial de estados del trámite | tramites | Pendiente |
+| RF-16 | Validación de entrada en trámites y pagos | tramites, pagos | **Parcial** (manual en el controlador; sin esquemas Vine) |
+| RF-17 | Proteger rutas de escritura con autenticación (`X-Identidad`) | tramites, pagos | **Implementado** |
+| RF-18 | Historial de estados del trámite | tramites | **Implementado** (`tramites_eventos` + `GET /tramites/:id/eventos`) |
 | RF-19 | Comprobantes / recibo de pago | pagos | Pendiente |
-| RF-20 | Roles y permisos (ciudadano vs. municipal) | todos | Pendiente |
+| RF-20 | Roles y permisos (`ciudadano`, `personal_muni_tesoreria`, `admin`) | todos | **Implementado** |
+| RF-21 | Revocación de identidades antes de su caducidad | usuarios, tramites, pagos | **Implementado** (`jti` + lista cacheada) |
+| RF-22 | Encolar y reintentar trámites creados sin conexión, sin duplicarlos | tramites, UI | **Implementado** (`localStorage` + `Idempotency-Key`) |
 
 ---
 
@@ -538,6 +661,10 @@ mediante `environment:` en `docker-compose.yml`.
 | RNF-25 | Un solo `docker compose up` levanta la plataforma completa. |
 | RNF-26 | Cada servicio se despliega y escala de forma independiente. |
 | RNF-27 | Secretos gestionados por variables de entorno, no embebidos en la imagen. |
+| RNF-28 | Concurrencia optimista en escrituras de trámites: `version` + `409` si la fila cambió. |
+| RNF-29 | Rotación de secretos sin cortar sesiones y revocación individual de identidades por `jti`. |
+| RNF-30 | Idempotencia en la creación de trámites: la misma clave devuelve el trámite existente (`200`, `Idempotent-Replay`). |
+| RNF-31 | Acceso desde internet mediante túnel HTTPS temporal, sin abrir PostgreSQL ni los microservicios. |
 
 ---
 
@@ -548,71 +675,68 @@ observaciones sobre el estado actual.
 
 ### 11.1 Inconsistencias funcionales
 
-| # | Hallazgo | Ubicación | Impacto |
-|---|---|---|---|
-| H-01 | El controlador de pagos lee `id_tramite`, `metodo_pago`, `fecha_pago` (snake_case) pero el modelo `Pago` declara `idTramite`, `metodoPago`, `fechaPago` (camelCase). Lucid no expone las columnas en snake_case sin `parseColumn`, por lo que el mapeo no es evidente. | `pagos/app/controllers/pagos_controller.ts:11` vs `pagos/app/models/pago.ts` | **Alto** — Riesgo de columnas nulas o error en la inserción. |
-| H-02 | `POST /api/v1/tramites` y `POST /api/v1/pagos` son públicas: cualquier cliente anónimo puede crear trámites y pagos. | `tramites/start/routes.ts:21`, `pagos/start/routes.ts:14` | **Alto** |
-| H-03 | `GET /api/v1/usuarios` devuelve la lista completa de usuarios sin paginación ni filtro. | `usuarios/app/controllers/usuarios_controller.ts:6` | Medio |
-| H-04 | `tramites.usuario_id` no tiene foreign key a `users.id`; se acepta cualquier `usuarioId`. | `tramites/database/migrations/1788911025790_create_tramites_table.ts:10` | Medio |
-| H-05 | El servicio `pagos` expone rutas `signup`, `login`, `profile` contra un modelo `User` y una tabla `auth_access_tokens` en `pagos_db`; `usuarios` es el único servicio que gestiona usuarios. Duplicación de responsabilidad. | `pagos/start/routes.ts:19-38` | Medio |
-| H-06 | El mensaje de error del flujo de pagos usa la clave `mensaje` mientras el servicio de trámites usa `message`. Inconsistencia de contrato entre servicios. | `pagos/app/controllers/pagos_controller.ts` vs `tramites/app/controllers/tramites_controller.ts:26` | Bajo |
-| H-07 | `PATCH /api/v1/tramites/:id` permite transicionar a cualquier string sin validar contra una lista de estados válidos. | `tramites/app/controllers/tramites_controller.ts:42` | Medio |
-| H-08 | `pagos` no tiene migración de la tabla `users` ni de `auth_access_tokens`, pero su `schema.ts` y su modelo `User` las asumen. | `pagos/database/` | **Alto** — Rutas de auth de `pagos` fallarán en runtime. |
+> Estado Oct. 2026: **H-01 … H-08 resueltos**. Se conserva el registro histórico y se
+> anota la solución aplicada.
+
+| # | Hallazgo (base) | Solución actual |
+|---|---|---|
+| H-01 | snake_case vs camelCase en `Pago` | Resuelto: el controlador y el modelo usan las columnas snake_case con `parseColumn`/`serialize` consistentes. |
+| H-02 | Escrituras públicas | Resuelto: todas las rutas de dominio exigen `X-Identidad`; el ciudadano solo actúa sobre lo suyo. |
+| H-03 | `GET /api/v1/usuarios` sin control | Resuelto: exige rol `admin`. |
+| H-04 | `usuario_id` sin validar | Resuelto: se valida por HTTP contra `usuarios` antes de persistir. |
+| H-05 | Auth duplicado en pagos/trámites | **Resuelto**: se eliminó el andamiaje de auth de esos servicios (rutas, controladores, modelo y migraciones). |
+| H-06 | `mensaje` vs `message` | Se mantiene consciente: pagos usa `mensaje`, trámites `message`. |
+| H-07 | Estados sin catálogo | **Resuelto**: catálogo y transiciones en `tramites/app/services/estados.ts`; `PATCH` rechaza textos y transiciones inválidas (400). |
+| H-08 | `users`/`auth_access_tokens` en pagos | **Resuelto**: ya no se crean esas tablas en `pagos_db` ni en la base de trámites. |
+
+### 11.1.1 Nuevos hallazgos (Oct. 2026)
+
+| # | Hallazgo | Impacto |
+|---|---|---|
+| H-21 | **Resuelto**: los códigos pasan a `varchar(12)` (`T`/`P` + hasta 11 dígitos) mediante `1792100…_ampliar_codigos.ts`; ya no se agota el rango de 3 dígitos. | — |
+| H-22 | **Resuelto**: sin andamiaje de auth en trámites ni pagos, reenviar `Authorization` ya no busca `auth_access_tokens`. | — |
+| H-23 | **Resuelto**: cada identidad lleva `jti`; logout y `POST /auth/revocar` lo anotan y trámites/pagos lo consultan desde una caché de 5 s. | — |
+| H-24 | **Resuelto**: las escrituras concurrentes de trámites usan `version` optimista y responden 409 si la fila cambió. | — |
+| H-25 | **Resuelto**: la creación de trámites acepta `Idempotency-Key`; el unique por usuario evita duplicados al reintentar una cola offline. | — |
+| H-26 | **Resuelto**: la UI conserva fecha y origen originales (`creado_cliente_en`, `origen`) y ordena por la fecha de solicitud. | — |
 
 ### 11.2 Configuración e infraestructura
 
 | # | Hallazgo | Detalle |
 |---|---|---|
-| H-09 | Los `Dockerfile` ejecutan `pnpm dev` (servidor de desarrollo con HMR) en lugar de un build de producción. No es apto para despliegue real. |
+| H-09 | **Resuelto**: build multi-stage con `node ace build`, dependencias de producción y `node bin/server.js`. |
 | H-10 | El `.env` de `usuarios` y `tramites` fija `DB_CONNECTION=sqlite`; Docker lo sobreescribe con `pg`. La configuración local y la de contenedores difieren. |
 | H-11 | PostgreSQL se inicializa con `POSTGRES_DB=municipalidad`. `usuarios_db` y `pagos_db` deben crearse manualmente antes de migrar. |
 | H-12 | `CORS_ORIGIN` está comentado en los tres `.env.example`: cualquier origen puede consumir la API. |
-| H-13 | No hay migración inicial ni mecanismo de arranque que aplique migraciones automáticamente en los contenedores. |
+| H-13 | **Resuelto**: el contenedor `tramites_migrate` ejecuta `migration:run --force && db:seed`. |
 | H-14 | Las contraseñas de ejemplo (`municipalidad_dev`) viven en `docker-compose.yml`, que sí se versiona. |
 | H-15 | El `.gitignore` de la raíz sólo cubre `tramites/`; `usuarios/` y `pagos/` heredan los `.gitignore` propios. Conviene unificar. |
-| H-16 | `TRAMITES_SERVICE_URL` está en `pagos/.env` pero **no** en `pagos/.env.example`, aunque `start/env.ts` la exige. Un despliegue siguiendo el ejemplo fallaría al arrancar. |
+| H-16 | **Resuelto**: `TRAMITES_SERVICE_URL` y `USUARIOS_SERVICE_URL` figuran en los `.env.example`. |
 
 ### 11.3 Calidad
 
 | # | Hallazgo | Detalle |
 |---|---|---|
-| H-17 | No existen casos de prueba. `tests/` sólo contiene `bootstrap.ts`, pese a que Japa está configurado. |
+| H-17 | **Resuelto**: 44 pruebas Japa unitarias/de auth y `scripts/integracion_pagos.sh` (18 comprobaciones) cubren el flujo de pago en dos pasos contra el stack real. |
 | H-18 | No hay validadores Vine para trámites ni pagos; el `store` de ambos acepta `request.only()` sin validación. |
-| H-19 | No hay manejo de errores de BD (violación de unique, campos inválidos) en los controladores. |
+| H-19 | **Parcial**: el `store` de trámites captura la violación `23505` para devolver el trámite idempotente; el resto de errores de BD sigue sin manejo específico. |
 | H-20 | No hay logging de negocio: el registro de un pago y la compensación no dejan rastro auditable. |
 
 ---
 
 ## 12. Plan de trabajo sugerido
 
-### Fase 1 — Corrección de bloqueantes
+> Fases 1–4 mayormente completadas. Lo que sigue es el trabajo pendiente real.
 
-1. Resolver H-01: alinear la convención de nombres entre `Pago` y su controlador.
-2. Resolver H-08: crear las migraciones de `users` y `auth_access_tokens` en `pagos`, o eliminar las rutas de auth de `pagos` y `tramites` (recomendado: H-05).
-3. Cerrar H-02 y H-04: exigir `auth` en las rutas de escritura y validar la existencia del usuario.
-4. Añadir `TRAMITES_SERVICE_URL` a `pagos/.env.example` (H-16).
+### Pendiente prioritario
 
-### Fase 2 — Validación y seguridad
+1. **Observabilidad**: OpenTelemetry y métricas Prometheus (RNF-23, RNF-24).
 
-5. Implementar validadores Vine para trámites y pagos (H-18, RNF-12).
-6. Definir catálogo de estados válidos y transiciones permitidas (H-07).
-7. Unificar la clave de error a `message` en todos los servicios (H-06).
-8. Configurar `CORS_ORIGIN` por entorno (H-12) y mover credenciales a `.env` (H-14).
+### Mejoras de producto
 
-### Fase 3 — Calidad y pruebas
-
-9. Migrar los `Dockerfile` a build de producción multi-stage (H-09).
-10. Escribir pruebas Japa para auth, trámites y el flujo de pago completo (H-17, RNF-19).
-11. Añadir `npm run typecheck` y `lint` a un pipeline de CI.
-
-### Fase 4 — Escalabilidad de producto
-
-12. Paginación y filtros en los listados (RF-15, H-03).
-13. Historial de estados de trámite y comprobantes de pago (RF-18, RF-19).
-14. Roles y permisos diferenciados ciudadano/municipal (RF-20).
-15. Observabilidad: OpenTelemetry y métricas Prometheus (RNF-23, RNF-24).
-
----
+2. Paginación y filtros en los listados (RF-15, H-03 parcial).
+3. Comprobantes de pago (RF-19) y mostrar el historial de estados en la interfaz.
+4. CORS por entorno (H-12) y endurecimiento de secretos por servicio (H-14).
 
 ## 13. Glosario
 
@@ -625,3 +749,8 @@ observaciones sobre el estado actual.
 | **Compensating transaction** | Deshacer una escritura previa cuando una segunda operación falla, en lugar de usar transacciones distribuidas. |
 | **Tokens guard** | Estrategia de autenticación stateless basada en tokens de acceso persistidos. |
 | **Fail-fast** | Fallar en el arranque si la configuración es inválida, en lugar de fallar en runtime. |
+| **DNI** | Documento de identidad; en el sistema es la PK de `users` (`varchar(8)`). |
+| **Código T/P** | Identificador legible de trámite (`T…`) o pago (`P…`) generado con secuencia. |
+| **Identidad firmada** | HMAC-SHA256 de `{id, rol, exp}` en `X-Identidad`, verificada sin llamada remota. |
+| **Saga** | Secuencia de pasos compensables persistida en `pagos_intentos` para acreditar un pago. |
+| **Reloj de Lamport** | Contador lógico por servicio/réplica para ordenar eventos (demo de concurrencia). |

@@ -24,3 +24,6 @@ yarn-error.log
 
 # Platform specific
 .DS_Store
+
+# Generado por node ace codegen
+.adonisjs

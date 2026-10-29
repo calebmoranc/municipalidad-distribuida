@@ -51,7 +51,6 @@ export default defineConfig({
     () => import('@adonisjs/shield/shield_provider'),
     () => import('@adonisjs/lucid/database_provider'),
     () => import('@adonisjs/cors/cors_provider'),
-    () => import('@adonisjs/auth/auth_provider'),
     () => import('#providers/api_provider'),
   ],
 
@@ -65,6 +64,7 @@ export default defineConfig({
   */
   preloads: [
     () => import('#start/routes'),
+    () => import('#start/preloads'),
     () => import('#start/kernel'),
     () => import('#start/validator'),
   ],
@@ -108,7 +108,7 @@ export default defineConfig({
   hooks: {
     init: [
       indexEntities({
-        transformers: { enabled: true },
+        transformers: { enabled: false },
       }),
       generateRegistry(),
     ],

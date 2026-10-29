@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Municipalidad — Trámites y pagos</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ======================= Autenticación ======================= -->
+  <main id="pantalla-auth" class="auth">
+    <section class="auth__marca">
+      <div class="marca__icono" aria-hidden="true">M</div>
+      <h1>Municipalidad</h1>
+      <p class="marca__lema">Trámites y pagos en línea</p>
+      <ul class="marca__puntos">
+        <li>Usuarios, trámites y pagos en servicios separados</li>
+        <li>Operaciones ordenadas con relojes lógicos</li>
+        <li>El sistema sigue en pie si un servicio falla</li>
+      </ul>
+    </section>
+
+    <section class="auth__caja">
+      <div class="pestanas" role="tablist" aria-label="Autenticación">
+        <button class="pestana is-activa" type="button" data-auth="login" role="tab" aria-selected="true">
+          Ingresar
+        </button>
+        <button class="pestana" type="button" data-auth="registro" role="tab" aria-selected="false">
+          Registrarme
+        </button>
+      </div>
+
+      <!-- Ingreso -->
+      <form id="form-login" class="formulario" novalidate>
+        <h2>Bienvenido de nuevo</h2>
+        <p class="tenue">Ingresa con tu cuenta municipal.</p>
+
+        <label for="login-email">Correo electrónico</label>
+        <input id="login-email" name="email" type="email" autocomplete="username"
+               placeholder="nombre@correo.com" required>
+
+        <label for="login-password">Contraseña</label>
+        <input id="login-password" name="password" type="password"
+               autocomplete="current-password" placeholder="Mínimo 8 caracteres" required>
+
+        <p class="aviso-error" data-error="login" role="alert"></p>
+
+        <button class="boton boton--principal" type="submit">Ingresar</button>
+      </form>
+
+      <!-- Registro -->
+      <form id="form-registro" class="formulario is-oculto" novalidate>
+        <h2>Crear una cuenta</h2>
+        <p class="tenue">Regístrate para solicitar trámites y pagar en línea.</p>
+
+        <label for="registro-dni">DNI</label>
+        <input id="registro-dni" name="dni" type="text" inputmode="numeric"
+               pattern="[0-9]{8}" maxlength="8" minlength="8"
+               autocomplete="off" placeholder="8 dígitos" required>
+        <small class="tenue">El DNI será tu identificador dentro del sistema.</small>
+
+        <label for="registro-nombre">Nombre completo</label>
+        <input id="registro-nombre" name="fullName" type="text"
+               autocomplete="name" placeholder="Ana Pérez" required>
+
+        <label for="registro-email">Correo electrónico</label>
+        <input id="registro-email" name="email" type="email"
+               autocomplete="email" placeholder="nombre@correo.com" required>
+
+        <label for="registro-password">Contraseña</label>
+        <input id="registro-password" name="password" type="password"
+               autocomplete="new-password" placeholder="Entre 8 y 32 caracteres" required>
+
+        <label for="registro-confirmacion">Repetir contraseña</label>
+        <input id="registro-confirmacion" name="passwordConfirmation" type="password"
+               autocomplete="new-password" placeholder="Repite la contraseña" required>
+
+        <p class="aviso-error" data-error="registro" role="alert"></p>
+
+        <button class="boton boton--principal" type="submit">Crear cuenta</button>
+      </form>
+    </section>
+  </main>
+
+  <!-- ======================= Aplicación ======================= -->
+  <div id="pantalla-app" class="app is-oculto">
+
+    <aside class="barra-lateral">
+      <div class="barra-lateral__marca">
+        <div class="marca__icono marca__icono--pequeno" aria-hidden="true">M</div>
+        <div>
+          <strong>Municipalidad</strong>
+          <span>Portal del ciudadano</span>
+        </div>
+      </div>
+
+      <nav class="menu" aria-label="Secciones">
+        <button class="menu__item is-activo" type="button" data-vista="tramites">
+          <span aria-hidden="true">▤</span> Trámites
+        </button>
+        <button class="menu__item" type="button" data-vista="pagos">
+          <span aria-hidden="true">₡</span> Pagos
+        </button>
+        <button class="menu__item" type="button" data-vista="cuenta">
+          <span aria-hidden="true">◍</span> Mi cuenta
+        </button>
+
+        <button class="menu__item menu__item--admin is-oculto" type="button" data-vista="usuarios">
+          <span aria-hidden="true">☷</span> Usuarios
+        </button>
+        <button class="menu__item menu__item--admin is-oculto" type="button" data-vista="administracion">
+          <span aria-hidden="true">⚙</span> Administración
+        </button>
+      </nav>
+
+      <div class="barra-lateral__pie">
+        <div class="usuario-mini">
+          <div class="avatar" data-campo="iniciales">--</div>
+          <div class="usuario-mini__datos">
+            <strong data-campo="nombre">—</strong>
+            <span data-campo="rol">—</span>
+          </div>
+        </div>
+        <button id="boton-salir" class="boton boton--fantasma boton--bloque" type="button">
+          Cerrar sesión
+        </button>
+      </div>
+    </aside>
+
+    <div class="contenido">
+      <header class="cabecera">
+        <div>
+          <h2 id="titulo-vista">Trámites</h2>
+          <p id="subtitulo-vista" class="tenue">Solicitudes registradas en el sistema.</p>
+        </div>
+        <div class="cabecera__acciones">
+          <button id="boton-nuevo" class="boton boton--principal" type="button">
+            Nuevo trámite
+          </button>
+        </div>
+      </header>
+
+      <main class="vistas">
+
+        <!-- Trámites -->
+        <section class="vista is-activa" data-vista="tramites">
+          <div id="cola-tramites" class="tarjeta cola is-oculto">
+            <div class="cola__cabecera">
+              <div>
+                <h3>Pendientes de envío</h3>
+                <p id="cola-resumen" class="tenue"></p>
+              </div>
+              <button id="cola-reintentar" class="boton boton--secundario boton--pequeno" type="button">
+                Reintentar ahora
+              </button>
+            </div>
+            <ul id="cola-lista" class="cola__lista"></ul>
+            <div id="cola-historial-envoltura" class="cola__historial is-oculto">
+              <h4>Envíos recientes</h4>
+              <ul id="cola-historial" class="cola__lista"></ul>
+            </div>
+          </div>
+
+          <form id="form-tramite" class="tarjeta formulario formulario--en-linea is-oculto" novalidate>
+            <h3 id="tramite-titulo">Registrar un trámite</h3>
+            <div class="campos">
+              <div class="campo" data-campo-privilegiado>
+                <label for="tramite-usuario">DNI del usuario</label>
+                <input id="tramite-usuario" name="usuarioId" type="text" inputmode="numeric"
+                       pattern="[0-9]{8}" maxlength="8" placeholder="8 dígitos">
+                <small class="tenue">Debe existir en el servicio de usuarios.</small>
+              </div>
+              <div class="campo">
+                <label for="tramite-tipo">Tipo de trámite</label>
+                <select id="tramite-tipo" name="tipo" required>
+                  <option value="">Selecciona un tipo…</option>
+                </select>
+              </div>
+              <div class="campo is-oculto" id="campo-tipo-detalle">
+                <label for="tramite-tipo-detalle">Especifica el trámite</label>
+                <input id="tramite-tipo-detalle" name="tipoDetalle" type="text"
+                       placeholder="Describe el trámite">
+              </div>
+              <div class="campo">
+                <label for="tramite-monto">Monto</label>
+                <input id="tramite-monto" name="monto" type="number" min="0" step="0.01" required>
+                <small class="tenue" id="tramite-monto-ayuda">Lo fija el tipo seleccionado.</small>
+              </div>
+              <div class="campo campo--ancho">
+                <label for="tramite-descripcion">Descripción</label>
+                <textarea id="tramite-descripcion" name="descripcion" rows="3"
+                          placeholder="Detalle de la solicitud" required></textarea>
+              </div>
+            </div>
+            <p class="aviso-error" data-error="tramite" role="alert"></p>
+            <div class="formulario__pie">
+              <button class="boton boton--secundario" type="button" data-cancelar="tramite">Cancelar</button>
+              <button class="boton boton--principal" type="submit">Registrar trámite</button>
+            </div>
+          </form>
+
+          <div class="tarjeta">
+            <div class="tabla-envoltura">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th><th>Usuario</th><th>Tipo</th><th>Descripción</th><th>Monto</th>
+                    <th>Estado</th>
+                    <th class="solo-privilegiado">Reloj</th>
+                    <th class="solo-privilegiado">Nodo</th>
+                    <th class="solo-admin">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="tabla-tramites"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Pagos -->
+        <section class="vista" data-vista="pagos">
+          <form id="form-pago" class="tarjeta formulario formulario--en-linea is-oculto" novalidate>
+            <h3>Registrar un pago</h3>
+            <div class="campos">
+              <div class="campo">
+                <label for="pago-tramite">ID del trámite</label>
+                <input id="pago-tramite" name="id_tramite" type="text"
+                       pattern="T[0-9]{1,11}" placeholder="T1" required>
+                <small class="tenue">El trámite debe existir.</small>
+              </div>
+              <div class="campo" data-campo-privilegiado>
+                <label for="pago-usuario">DNI del usuario</label>
+                <input id="pago-usuario" name="usuario_id" type="text" inputmode="numeric"
+                       pattern="[0-9]{8}" maxlength="8" placeholder="8 dígitos">
+                <small class="tenue">A nombre de quién se registra el pago.</small>
+              </div>
+              <div class="campo">
+                <label for="pago-monto">Monto</label>
+                <input id="pago-monto" name="monto" type="number" min="0.01" step="0.01"
+                       placeholder="15000.00" required>
+              </div>
+              <div class="campo">
+                <label for="pago-metodo">Método de pago</label>
+                <select id="pago-metodo" name="metodo_pago" required>
+                  <option value="Efectivo">Efectivo</option>
+                  <option value="Tarjeta">Tarjeta</option>
+                  <option value="Transferencia">Transferencia</option>
+                  <option value="SINPE">SINPE</option>
+                </select>
+              </div>
+              <div class="campo">
+                <label for="pago-fecha">Fecha y hora</label>
+                <input id="pago-fecha" name="fecha_pago" type="datetime-local" required>
+              </div>
+            </div>
+            <p class="tenue">
+              El pago queda <strong>pendiente</strong> hasta que tesorería o administración
+              lo confirmen.
+            </p>
+            <p class="aviso-error" data-error="pago" role="alert"></p>
+            <div class="formulario__pie">
+              <button class="boton boton--secundario" type="button" data-cancelar="pago">Cancelar</button>
+              <button class="boton boton--principal" type="submit">Registrar pago</button>
+            </div>
+          </form>
+
+          <div class="tarjeta">
+            <div class="tabla-envoltura">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID pago</th><th>Trámite</th><th>Usuario</th><th>Monto</th>
+                    <th>Método</th><th>Fecha</th><th>Estado</th>
+                    <th class="solo-privilegiado">Reloj</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="tabla-pagos"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Mi cuenta -->
+        <section class="vista" data-vista="cuenta">
+          <div class="tarjeta tarjeta--perfil">
+            <div class="perfil">
+              <div class="avatar avatar--grande" data-campo="iniciales">--</div>
+              <div>
+                <h3 data-campo="nombre">—</h3>
+                <p class="tenue" data-campo="email">—</p>
+                <span class="insignia" data-campo="rol">—</span>
+              </div>
+            </div>
+            <dl class="detalles">
+              <div><dt>DNI (ID de usuario)</dt><dd data-campo="id">—</dd></div>
+              <div><dt>Rol</dt><dd data-campo="rol">—</dd></div>
+              <div><dt>Cuenta creada</dt><dd data-campo="creado">—</dd></div>
+            </dl>
+          </div>
+        </section>
+
+        <!-- Usuarios (solo admin) -->
+        <section class="vista" data-vista="usuarios">
+          <div class="barra-acciones">
+            <button id="boton-nuevo-usuario" class="boton boton--principal" type="button">
+              Nuevo usuario
+            </button>
+          </div>
+
+          <form id="form-usuario" class="tarjeta formulario formulario--en-linea is-oculto" novalidate>
+            <h3>Crear usuario</h3>
+            <p class="tenue">
+              Para dar de alta a una persona que llega a la oficina o para crear perfiles
+              de trabajadores municipales.
+            </p>
+            <div class="campos">
+              <div class="campo">
+                <label for="usuario-dni">DNI</label>
+                <input id="usuario-dni" name="dni" type="text" inputmode="numeric"
+                       pattern="[0-9]{8}" maxlength="8" required>
+              </div>
+              <div class="campo">
+                <label for="usuario-nombre">Nombre completo</label>
+                <input id="usuario-nombre" name="fullName" type="text" required>
+              </div>
+              <div class="campo">
+                <label for="usuario-email">Correo electrónico</label>
+                <input id="usuario-email" name="email" type="email" required>
+              </div>
+              <div class="campo">
+                <label for="usuario-rol">Rol</label>
+                <select id="usuario-rol" name="rol" required>
+                  <option value="ciudadano">Ciudadano</option>
+                  <option value="personal_muni_tesoreria">Tesorería</option>
+                  <option value="admin">Administrador general</option>
+                </select>
+              </div>
+              <div class="campo">
+                <label for="usuario-password">Contraseña</label>
+                <input id="usuario-password" name="password" type="password"
+                       autocomplete="new-password" required>
+              </div>
+              <div class="campo">
+                <label for="usuario-confirmacion">Repetir contraseña</label>
+                <input id="usuario-confirmacion" name="passwordConfirmation" type="password"
+                       autocomplete="new-password" required>
+              </div>
+            </div>
+            <p class="aviso-error" data-error="usuario" role="alert"></p>
+            <div class="formulario__pie">
+              <button class="boton boton--secundario" type="button" data-cancelar-usuario>Cancelar</button>
+              <button class="boton boton--principal" type="submit">Crear usuario</button>
+            </div>
+          </form>
+
+          <div class="tarjeta">
+            <div class="tabla-envoltura">
+              <table>
+                <thead>
+                  <tr><th>DNI</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Creado</th></tr>
+                </thead>
+                <tbody id="tabla-usuarios"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- Administración (solo admin) -->
+        <section class="vista" data-vista="administracion">
+          <div class="rejilla">
+            <article class="tarjeta metrica">
+              <span class="metrica__etiqueta">Usuarios registrados</span>
+              <strong class="metrica__valor" data-metrica="usuarios">—</strong>
+            </article>
+            <article class="tarjeta metrica">
+              <span class="metrica__etiqueta">Trámites registrados</span>
+              <strong class="metrica__valor" data-metrica="tramites">—</strong>
+            </article>
+            <article class="tarjeta metrica">
+              <span class="metrica__etiqueta">Pagos registrados</span>
+              <strong class="metrica__valor" data-metrica="pagos">—</strong>
+            </article>
+          </div>
+
+          <article class="tarjeta">
+            <h3>Tipos de trámite y montos</h3>
+            <p class="tenue">
+              Solo el administrador puede crear, modificar o eliminar tipos y sus montos.
+              El tipo <strong>Otro</strong> permite fijar el monto al registrar el trámite.
+            </p>
+
+            <form id="form-tipo" class="formulario formulario--en-linea" novalidate>
+              <div class="campos">
+                <div class="campo">
+                  <label for="tipo-nombre">Nombre</label>
+                  <input id="tipo-nombre" name="nombre" type="text" required>
+                </div>
+                <div class="campo">
+                  <label for="tipo-monto">Monto</label>
+                  <input id="tipo-monto" name="monto" type="number" min="0" step="0.01" required>
+                </div>
+              </div>
+              <p class="aviso-error" data-error="tipo" role="alert"></p>
+              <div class="formulario__pie">
+                <button class="boton boton--principal" type="submit">Agregar tipo</button>
+              </div>
+            </form>
+
+            <div class="tabla-envoltura">
+              <table>
+                <thead>
+                  <tr><th>ID</th><th>Nombre</th><th>Monto</th><th>Activo</th><th>Acciones</th></tr>
+                </thead>
+                <tbody id="tabla-tipos"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="tarjeta nota-admin">
+            <h3>Panel en vivo</h3>
+            <p class="tenue">
+              El estado en tiempo real de circuitos, relojes lógicos e intenciones de pago
+              se añadirá en una etapa posterior, cuando se revise la demostración de fallos.
+              Por ahora este módulo resume los datos persistidos.
+            </p>
+          </article>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <div id="aviso" class="aviso" role="status" aria-live="polite"></div>
+
+  <script src="cola.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

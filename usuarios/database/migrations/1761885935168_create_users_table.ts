@@ -5,7 +5,11 @@ export default class extends BaseSchema {
 
   async up() {
     this.schema.createTable(this.tableName, (table) => {
-      table.increments('id').notNullable()
+      // El identificador del usuario es su DNI: ocho dígitos, sin ceros de
+      // relleno obligatorios. Se usa varchar y no integer para conservar los
+      // ceros a la izquierda y porque en trámites y pagos viaja como texto.
+      table.string('id', 8).primary()
+
       table.string('full_name').nullable()
       table.string('email', 254).notNullable().unique()
       table.string('password').notNullable()

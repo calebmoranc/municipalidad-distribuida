@@ -4,3 +4,6 @@ tmp
 .adonisjs
 build
 .git
+tests
+bin/test.ts
+tests/bootstrap.ts
