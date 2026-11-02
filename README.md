@@ -4,6 +4,22 @@ Proyecto de Sistemas Operativos II. Tres microservicios independientes que gesti
 usuarios, trámites y pagos de una municipalidad, desplegados con Docker Compose y
 expuestos a través de un gateway Nginx.
 
+> **¿Vas a instalar el proyecto en otra laptop?**
+>
+> - **[README_COMPANEROS.md](./README_COMPANEROS.md)** — instalación paso a paso en
+>   Windows/WSL2 y Ubuntu, preparación de `.env`, red Wi-Fi, validación y problemas
+>   comunes.
+> - **[PROMPT_IA.md](./PROMPT_IA.md)** — prompt listo para pegar en una IA y que te guíe
+>   en la instalación sin romper el proyecto.
+>
+> Comandos rápidos después de clonar:
+>
+> ```bash
+> ./scripts/preparar_entorno.sh
+> ./scripts/verificar_entorno.sh
+> docker compose up -d --build
+> ```
+
 > **¿Vas a presentar el proyecto?** Hay dos formas:
 >
 > - **[GUION.md](./GUION.md)** — guion **manual**: qué decir, qué comando ejecutar y qué
